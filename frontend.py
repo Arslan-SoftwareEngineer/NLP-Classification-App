@@ -34,7 +34,7 @@ if st.button("Analyze Text"):
             
             try:
                 # Send a POST request to your local FastAPI server
-                response = requests.post("http://127.0.0.1:8000/predict", json=payload)
+                response = requests.post("https://your-fastapi-app.onrender.com/predict", json=payload)
                 
                 if response.status_code == 200:
                     data = response.json()
