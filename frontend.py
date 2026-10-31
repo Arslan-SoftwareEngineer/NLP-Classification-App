@@ -34,7 +34,7 @@ if st.button("Analyze Text"):
             
             try:
                 # Send a POST request to your local FastAPI server
-                response = requests.post("https://nlp-classification-app.streamlit.app/predict", json=payload)
+                response = requests.post("https://nlp-classification-app.streamlit.app", json=payload)
                 
                 if response.status_code == 200:
                     data = response.json()
