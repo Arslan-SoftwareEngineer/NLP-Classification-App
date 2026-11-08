@@ -1,51 +1,94 @@
+import os
+import torch
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 app = FastAPI(title="NLP Classification API")
 
-# Define the expected request body
-class TextRequest(BaseModel):
+# Enable CORS for frontend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Label Mappings
+LABEL_MAPPINGS = {
+    "sst2": {0: "Negative", 1: "Positive"},
+    "imdb": {0: "Negative", 1: "Positive"},
+    "ag_news": {0: "World", 1: "Sports", 2: "Business", 3: "Sci/Tech"}
+}
+
+# Model paths (local folder paths)
+MODEL_PATHS = {
+    "sst2": "./bert_sst2_final",
+    "imdb": "./bert_imdb",
+    "ag_news": "./bert_agnews"
+}
+
+# Cache for lazy loading models in memory
+models = {}
+tokenizers = {}
+
+class PredictionRequest(BaseModel):
     text: str
-    task: str  # 'sst2', 'imdb', or 'ag_news'
+    task: str
 
-# Lazy-load models to save your laptop's memory
-model_pipelines = {}
+def load_model_and_tokenizer(task: str):
+    """Lazy load models on demand to save memory."""
+    if task not in models:
+        model_path = MODEL_PATHS.get(task)
+        if not model_path or not os.path.exists(model_path):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Model directory for task '{task}' not found on server."
+            )
+        
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModelForSequenceClassification.from_pretrained(model_path)
+        model.eval()
+        
+        tokenizers[task] = tokenizer
+        models[task] = model
 
-def get_pipeline(task: str):
-    if task not in model_pipelines:
-        try:
-            if task == "sst2":
-                model_pipelines[task] = pipeline("sentiment-analysis", model="./bert_sst2_final", tokenizer="bert-base-uncased")
-            elif task == "imdb":
-                model_pipelines[task] = pipeline("sentiment-analysis", model="./bert_imdb", tokenizer="bert-base-uncased")
-            elif task == "ag_news":
-                model_pipelines[task] = pipeline("text-classification", model="./bert_agnews", tokenizer="bert-base-uncased")
-            else:
-                raise ValueError("Invalid task")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Model loading failed: {str(e)}")
-    return model_pipelines[task]
+    return tokenizers[task], models[task]
 
-# Label decoders
-def decode_label(task: str, label: str) -> str:
-    if task in ["sst2", "imdb"]:
-        return "Positive" if label == "LABEL_1" else "Negative"
-    elif task == "ag_news":
-        mapping = {"LABEL_0": "World", "LABEL_1": "Sports", "LABEL_2": "Business", "LABEL_3": "Sci/Tech"}
-        return mapping.get(label, label)
+@app.get("/")
+def root():
+    return {"status": "online", "message": "NLP Classification Backend is running."}
 
 @app.post("/predict")
-async def predict(request: TextRequest):
-    if request.task not in ["sst2", "imdb", "ag_news"]:
-        raise HTTPException(status_code=400, detail="Task must be sst2, imdb, or ag_news")
-    
-    classifier = get_pipeline(request.task)
-    result = classifier(request.text)[0]
-    
+def predict(request: PredictionRequest):
+    task = request.task.lower()
+    text = request.text.strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text input cannot be empty.")
+
+    if task not in LABEL_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Invalid task '{task}'. Valid tasks: sst2, imdb, ag_news")
+
+    tokenizer, model = load_model_and_tokenizer(task)
+
+    # Tokenize input
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+
+    # Run inference
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs.logits
+        probabilities = torch.softmax(logits, dim=-1)
+        confidence, predicted_class = torch.max(probabilities, dim=-1)
+
+    predicted_label = LABEL_MAPPINGS[task][predicted_class.item()]
+    confidence_score = float(confidence.item())
+
     return {
-        "text": request.text,
-        "task": request.task,
-        "prediction": decode_label(request.task, result["label"]),
-        "confidence": round(result["score"], 4)
+        "task": task,
+        "prediction": predicted_label,
+        "confidence": confidence_score
     }
