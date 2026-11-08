@@ -3,6 +3,7 @@ venv/
 __pycache__/
 *.zip
 upload_models.py
+train_models.py
 bert_sst2_final/
 bert_imdb/
 bert_agnews/
