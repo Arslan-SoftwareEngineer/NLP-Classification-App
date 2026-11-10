@@ -63,7 +63,7 @@ task_key, repo_id = MODEL_PATHS[selected_option]
 
 user_text = st.text_area("📝 Input Text for Classification", height=150, placeholder="Type or paste text here...")
 
-if st.button("🚀 Analyze Text", use_container_width=True, type="primary"):
+if st.button("Analyze Text", use_container_width=True, type="primary"):
     if not user_text.strip():
         st.warning("⚠️ Please provide text input before running analysis.")
     else:
